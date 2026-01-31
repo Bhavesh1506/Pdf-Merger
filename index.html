@@ -129,6 +129,66 @@
             </div>
         </div>
 
+        <!-- Export Preview Modal -->
+        <div class="modal-overlay" id="exportModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Export Preview</h2>
+                    <button class="modal-close" id="modalClose">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <!-- Page Preview Strip -->
+                    <div class="preview-strip" id="previewStrip">
+                        <!-- Page thumbnails will be rendered here -->
+                    </div>
+                    
+                    <!-- Export Stats -->
+                    <div class="export-stats">
+                        <div class="stat-item">
+                            <div class="stat-label">Total Pages</div>
+                            <div class="stat-value" id="statPageCount">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Estimated Size</div>
+                            <div class="stat-value" id="statFileSize">0 KB</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Filename Section -->
+                    <div class="filename-section">
+                        <label>Output Filename</label>
+                        <div class="filename-templates">
+                            <button class="template-btn active" data-template="custom">Custom</button>
+                            <button class="template-btn" data-template="merged">merged</button>
+                            <button class="template-btn" data-template="pages">pages_X-Y</button>
+                            <button class="template-btn" data-template="date">document_DATE</button>
+                        </div>
+                        <div class="filename-input-wrapper">
+                            <input type="text" class="filename-input" id="filenameInput" value="merged" placeholder="Enter filename">
+                            <span class="filename-suffix">.pdf</span>
+                        </div>
+                        <div class="filename-error" id="filenameError">Invalid filename</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="cancelExport">Cancel</button>
+                    <button class="btn btn-success" id="confirmExport">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Export PDF
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Toast Notifications -->
         <div class="toast-container" id="toastContainer"></div>
     </div>
