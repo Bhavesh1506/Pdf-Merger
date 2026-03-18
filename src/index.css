@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background: radial-gradient(circle at 20% 20%, #1b2439 0%, #0f0f0f 35%, #0f0f0f 100%);
+  color: #f3f4f6;
+}
+
+@layer components {
+  .tap-target {
+    @apply min-h-11 min-w-11;
+  }
+}
