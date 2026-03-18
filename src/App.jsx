@@ -150,7 +150,7 @@ function App() {
 
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        sourceBytesRef.current.set(sourceFileId, bytes);
+        sourceBytesRef.current.set(sourceFileId, new Uint8Array(bytes));
 
         const pdfLibDoc = await PDFDocument.load(bytes, { ignoreEncryption: false });
         const pageTotal = pdfLibDoc.getPageCount();
@@ -343,6 +343,15 @@ function App() {
     setFilesMeta((prev) => prev.filter((file) => activeSourceIds.has(file.id) || uploadProgress[file.id]));
   }, [pages, uploadProgress]);
 
+  async function loadPdfForExport(bytes) {
+    try {
+      return await PDFDocument.load(new Uint8Array(bytes), { ignoreEncryption: false });
+    } catch {
+      // Fallback for edge-case PDFs that parse with strict mode off.
+      return PDFDocument.load(new Uint8Array(bytes), { ignoreEncryption: true });
+    }
+  }
+
   async function buildMergedPdfBytes(pageItems) {
     const merged = await PDFDocument.create();
     const cache = new Map();
@@ -353,7 +362,7 @@ function App() {
 
       let sourceDoc = cache.get(pageInfo.sourceFileId);
       if (!sourceDoc) {
-        sourceDoc = await PDFDocument.load(sourceBytes, { ignoreEncryption: false });
+        sourceDoc = await loadPdfForExport(sourceBytes);
         cache.set(pageInfo.sourceFileId, sourceDoc);
       }
 
@@ -375,7 +384,8 @@ function App() {
       try {
         const bytes = await buildMergedPdfBytes(pages);
         if (!cancelled) setEstimatedBytes(bytes.length);
-      } catch {
+      } catch (error) {
+        console.error("Estimate failed:", error);
         if (!cancelled) setEstimatedBytes(0);
       } finally {
         if (!cancelled) setIsEstimating(false);
@@ -405,8 +415,10 @@ function App() {
       link.remove();
       URL.revokeObjectURL(url);
       setExportOpen(false);
-    } catch {
-      showToast("Failed to export PDF. Please try again.");
+    } catch (error) {
+      console.error("Export failed:", error);
+      const message = String(error?.message || "").trim();
+      showToast(message ? `Export failed: ${message}` : "Failed to export PDF. Please try again.");
     } finally {
       setIsExporting(false);
     }
