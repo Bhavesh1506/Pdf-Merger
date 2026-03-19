@@ -7,6 +7,78 @@ GlobalWorkerOptions.workerSrc = workerSrc;
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const FILE_COLORS = ["#3b82f6", "#8b5cf6", "#22c55e", "#f97316", "#ec4899"];
+const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"];
+const A4_WIDTH_PT = 595.28;
+
+function extensionOf(name) {
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+function detectFileKind(file) {
+  const ext = extensionOf(file.name);
+  if (ext === ".pdf") return "pdf";
+  if (IMAGE_EXTENSIONS.includes(ext)) return "image";
+  return null;
+}
+
+async function loadImageElementFromObjectUrl(objectUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = objectUrl;
+  });
+}
+
+async function blobToUint8Array(blob) {
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function prepareImageSource(file) {
+  const objectUrl = URL.createObjectURL(file);
+  const img = await loadImageElementFromObjectUrl(objectUrl);
+  const width = img.naturalWidth || 1;
+  const height = img.naturalHeight || 1;
+
+  const ext = extensionOf(file.name);
+  const inputMime = (file.type || "").toLowerCase();
+  const isJpg = inputMime === "image/jpeg" || inputMime === "image/jpg" || ext === ".jpg" || ext === ".jpeg";
+  const isPng = inputMime === "image/png" || ext === ".png";
+  const isWebp = inputMime === "image/webp" || ext === ".webp";
+
+  if (isJpg || isPng) {
+    const bytes = await blobToUint8Array(file);
+    return {
+      thumbnailUrl: objectUrl,
+      width,
+      height,
+      bytes,
+      mimeType: isJpg ? "image/jpeg" : "image/png",
+    };
+  }
+
+  if (isWebp) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0, width, height);
+    const pngBlob = await new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Failed to convert WebP image."))), "image/png", 1);
+    });
+    const bytes = await blobToUint8Array(pngBlob);
+    return {
+      thumbnailUrl: objectUrl,
+      width,
+      height,
+      bytes,
+      mimeType: "image/png",
+    };
+  }
+
+  throw new Error("Unsupported image format.");
+}
 
 function createId(prefix = "id") {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return `${prefix}-${crypto.randomUUID()}`;
@@ -18,6 +90,10 @@ function formatBytes(bytes) {
   const mb = bytes / (1024 * 1024);
   if (mb >= 1) return `${mb.toFixed(2)} MB`;
   return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
+function pageLabel(count) {
+  return `${count} ${count === 1 ? "page" : "pages"}`;
 }
 
 function buildExportName(preset, customName) {
@@ -133,8 +209,9 @@ function App() {
     if (!entries.length) return;
 
     for (const file of entries) {
-      if (!file.name.toLowerCase().endsWith(".pdf")) {
-        showToast(`${file.name}: only PDF files are supported.`);
+      const fileKind = detectFileKind(file);
+      if (!fileKind) {
+        showToast(`${file.name}: only PDF, JPG, PNG, and WebP files are supported.`);
         continue;
       }
 
@@ -149,56 +226,93 @@ function App() {
       setFilesMeta((prev) => [...prev, { id: sourceFileId, name: file.name, color }]);
 
       try {
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        sourceBytesRef.current.set(sourceFileId, new Uint8Array(bytes));
+        if (fileKind === "pdf") {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          sourceBytesRef.current.set(sourceFileId, { kind: "pdf", bytes: new Uint8Array(bytes) });
 
-        const pdfLibDoc = await PDFDocument.load(bytes, { ignoreEncryption: false });
-        const pageTotal = pdfLibDoc.getPageCount();
+          const pdfLibDoc = await PDFDocument.load(bytes, { ignoreEncryption: false });
+          const pageTotal = pdfLibDoc.getPageCount();
 
-        const loadingTask = getDocument({ data: bytes });
-        const pdfJsDoc = await loadingTask.promise;
+          const loadingTask = getDocument({ data: bytes });
+          const pdfJsDoc = await loadingTask.promise;
 
-        setUploadProgress((prev) => ({
-          ...prev,
-          [sourceFileId]: { name: file.name, done: 0, total: pageTotal, status: "processing" },
-        }));
-
-        const nextPages = [];
-        for (let i = 0; i < pageTotal; i += 1) {
-          const thumb = await renderPageThumbnail(pdfJsDoc, i + 1);
-          const originalRotation = pdfLibDoc.getPage(i).getRotation().angle || 0;
-          nextPages.push({
-            id: createId("page"),
-            sourceFileId,
-            sourceFileName: file.name,
-            sourcePageIndex: i,
-            sourcePageNumber: i + 1,
-            thumbnail: thumb,
-            rotation: 0,
-            originalRotation,
-          });
           setUploadProgress((prev) => ({
             ...prev,
-            [sourceFileId]: {
-              ...prev[sourceFileId],
-              done: i + 1,
-              total: pageTotal,
-              status: i + 1 === pageTotal ? "done" : "processing",
+            [sourceFileId]: { name: file.name, done: 0, total: pageTotal, status: "processing" },
+          }));
+
+          const nextPages = [];
+          for (let i = 0; i < pageTotal; i += 1) {
+            const thumb = await renderPageThumbnail(pdfJsDoc, i + 1);
+            const originalRotation = pdfLibDoc.getPage(i).getRotation().angle || 0;
+            nextPages.push({
+              id: createId("page"),
+              sourceFileId,
+              sourceFileName: file.name,
+              sourcePageIndex: i,
+              sourcePageNumber: i + 1,
+              thumbnail: thumb,
+              sourceKind: "pdf",
+              rotation: 0,
+              originalRotation,
+            });
+            setUploadProgress((prev) => ({
+              ...prev,
+              [sourceFileId]: {
+                ...prev[sourceFileId],
+                done: i + 1,
+                total: pageTotal,
+                status: i + 1 === pageTotal ? "done" : "processing",
+              },
+            }));
+          }
+
+          setPages((prev) => [...prev, ...nextPages]);
+        } else {
+          setUploadProgress((prev) => ({
+            ...prev,
+            [sourceFileId]: { name: file.name, done: 0, total: 1, status: "processing" },
+          }));
+
+          const imageData = await prepareImageSource(file);
+          sourceBytesRef.current.set(sourceFileId, {
+            kind: "image",
+            bytes: imageData.bytes,
+            mimeType: imageData.mimeType,
+            width: imageData.width,
+            height: imageData.height,
+          });
+
+          setPages((prev) => [
+            ...prev,
+            {
+              id: createId("page"),
+              sourceFileId,
+              sourceFileName: file.name,
+              sourcePageIndex: 0,
+              sourcePageNumber: 1,
+              thumbnail: imageData.thumbnailUrl,
+              sourceKind: "image",
+              rotation: 0,
+              originalRotation: 0,
             },
+          ]);
+
+          setUploadProgress((prev) => ({
+            ...prev,
+            [sourceFileId]: { ...prev[sourceFileId], done: 1, total: 1, status: "done" },
           }));
         }
-
-        setPages((prev) => [...prev, ...nextPages]);
       } catch (error) {
         sourceBytesRef.current.delete(sourceFileId);
         setFilesMeta((prev) => prev.filter((f) => f.id !== sourceFileId));
         const message = String(error?.message || "").toLowerCase();
-        if (error?.name === "PasswordException" || message.includes("password")) {
+        if (fileKind === "pdf" && (error?.name === "PasswordException" || message.includes("password"))) {
           showToast("Password protected PDFs are not supported yet");
-        } else if (message.includes("encrypted")) {
+        } else if (fileKind === "pdf" && message.includes("encrypted")) {
           showToast("Password protected PDFs are not supported yet");
         } else {
-          showToast(`${file.name}: invalid or corrupted PDF.`);
+          showToast(`${file.name}: invalid or unsupported file.`);
         }
       }
     }
@@ -357,12 +471,30 @@ function App() {
     const cache = new Map();
 
     for (const pageInfo of pageItems) {
-      const sourceBytes = sourceBytesRef.current.get(pageInfo.sourceFileId);
-      if (!sourceBytes) continue;
+      const sourceEntry = sourceBytesRef.current.get(pageInfo.sourceFileId);
+      if (!sourceEntry) continue;
+
+      if ((pageInfo.sourceKind || sourceEntry.kind) === "image") {
+        const finalRotation = (pageInfo.originalRotation + pageInfo.rotation) % 360;
+        const sourceWidth = sourceEntry.width || 1;
+        const sourceHeight = sourceEntry.height || 1;
+        const ratio = sourceHeight / sourceWidth;
+        const pageHeight = Math.max(1, A4_WIDTH_PT * ratio);
+        const page = merged.addPage([A4_WIDTH_PT, pageHeight]);
+        let embeddedImage;
+        if (sourceEntry.mimeType === "image/jpeg") {
+          embeddedImage = await merged.embedJpg(sourceEntry.bytes);
+        } else {
+          embeddedImage = await merged.embedPng(sourceEntry.bytes);
+        }
+        page.drawImage(embeddedImage, { x: 0, y: 0, width: A4_WIDTH_PT, height: pageHeight });
+        page.setRotation(degrees(finalRotation));
+        continue;
+      }
 
       let sourceDoc = cache.get(pageInfo.sourceFileId);
       if (!sourceDoc) {
-        sourceDoc = await loadPdfForExport(sourceBytes);
+        sourceDoc = await loadPdfForExport(sourceEntry.bytes);
         cache.set(pageInfo.sourceFileId, sourceDoc);
       }
 
@@ -439,7 +571,7 @@ function App() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,application/pdf"
+          accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
           multiple
           className="hidden"
           onChange={(e) => handleAddFiles(e.target.files)}
@@ -452,8 +584,8 @@ function App() {
             onDragOver={(e) => e.preventDefault()}
             onDrop={onDropFiles}
           >
-            <p className="text-xl font-semibold text-white">Drop PDF files here</p>
-            <p className="mt-2 text-sm text-gray-300">Upload multiple PDFs and merge them in seconds</p>
+            <p className="text-xl font-semibold text-white">Drop PDF or image files here</p>
+            <p className="mt-2 text-sm text-gray-300">Upload multiple files and merge them in seconds</p>
             <button
               type="button"
               className="tap-target mt-6 rounded-lg bg-accent px-5 py-3 text-sm font-medium text-white transition hover:bg-blue-500"
@@ -499,7 +631,7 @@ function App() {
                   Undo
                 </button>
                 <p className="ml-auto text-sm text-gray-300">
-                  {pageCount} pages • {fileCount} files
+                  {pageLabel(pageCount)} • {fileCount} files
                 </p>
               </div>
             </section>
@@ -522,13 +654,14 @@ function App() {
                       className="col-span-full rounded-xl px-4 py-2 text-sm font-medium text-white"
                       style={{ backgroundColor: `${file.color}2b`, borderLeft: `4px solid ${file.color}` }}
                     >
-                      {file.name} • {sourceCounts.get(item.sourceFileId)} pages
+                      {file.name} • {pageLabel(sourceCounts.get(item.sourceFileId))}
                     </div>
                   );
                 }
 
                 const page = item.page;
                 const file = fileMap.get(page.sourceFileId);
+                const fileType = page.sourceKind === "image" ? "IMG" : "PDF";
                 const selected = selectedIds.has(page.id);
                 const isDragging = draggingId === page.id || touchDraggingId === page.id;
                 const isDeleting = removingIds.has(page.id);
@@ -566,6 +699,9 @@ function App() {
                           style={{ backgroundColor: `${file?.color || "#3b82f6"}cc` }}
                         >
                           {page.sourcePageNumber}
+                        </span>
+                        <span className="absolute right-2 bottom-2 rounded bg-black/70 px-2 py-1 text-[10px] font-semibold text-gray-100">
+                          {fileType}
                         </span>
                         {selected && (
                           <span className="absolute right-2 top-2 rounded-full bg-accent px-2 py-1 text-xs font-semibold text-white">
@@ -655,7 +791,7 @@ function App() {
           <div className="h-full w-full rounded-none border border-white/10 bg-[#161616] p-5 sm:h-auto sm:max-w-lg sm:rounded-2xl">
             <h3 className="text-lg font-semibold text-white">Export PDF</h3>
             <div className="mt-4 space-y-3 text-sm text-gray-200">
-              <p>{pages.length} pages in export</p>
+              <p>{pageLabel(pages.length)} in export</p>
               <p>Estimated size: {isEstimating ? "Calculating..." : formatBytes(estimatedBytes)}</p>
             </div>
 
