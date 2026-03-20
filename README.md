@@ -7,6 +7,8 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)
 ![Privacy: No Upload](https://img.shields.io/badge/Privacy-No%20Uploads-111827?style=for-the-badge)
 
+Live Demo - https://paperfuse.netlify.app/
+
 PaperFuse is a client-side PDF tool for merging, arranging, and exporting documents without uploading files to any server.
 
 ##  Features
