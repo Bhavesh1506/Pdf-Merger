@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PDFDocument, degrees } from "pdf-lib";
+import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -9,6 +9,12 @@ const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const FILE_COLORS = ["#3b82f6", "#8b5cf6", "#22c55e", "#f97316", "#ec4899"];
 const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"];
 const A4_WIDTH_PT = 595.28;
+const WATERMARK_COLORS = {
+  red: { label: "Red", hex: "#ef4444", rgb: [0.937, 0.267, 0.267] },
+  black: { label: "Black", hex: "#111111", rgb: [0.067, 0.067, 0.067] },
+  blue: { label: "Blue", hex: "#3b82f6", rgb: [0.231, 0.51, 0.965] },
+  gray: { label: "Gray", hex: "#6b7280", rgb: [0.42, 0.447, 0.502] },
+};
 
 function extensionOf(name) {
   const dot = name.lastIndexOf(".");
@@ -122,12 +128,12 @@ function App() {
   const [estimatedBytes, setEstimatedBytes] = useState(0);
   const [isEstimating, setIsEstimating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [passwordProtectEnabled, setPasswordProtectEnabled] = useState(false);
-  const [passwordValue, setPasswordValue] = useState("");
-  const [confirmPasswordValue, setConfirmPasswordValue] = useState("");
-  const [showPasswordValue, setShowPasswordValue] = useState(false);
-  const [showConfirmPasswordValue, setShowConfirmPasswordValue] = useState(false);
-  const [encryptionSupported, setEncryptionSupported] = useState(true);
+  const [watermarkEnabled, setWatermarkEnabled] = useState(false);
+  const [watermarkText, setWatermarkText] = useState("CONFIDENTIAL");
+  const [watermarkFontSize, setWatermarkFontSize] = useState(48);
+  const [watermarkOpacityPercent, setWatermarkOpacityPercent] = useState(30);
+  const [watermarkColor, setWatermarkColor] = useState("gray");
+  const [watermarkPosition, setWatermarkPosition] = useState("center_diagonal");
 
   const fileInputRef = useRef(null);
   const sourceBytesRef = useRef(new Map());
@@ -168,18 +174,7 @@ function App() {
   }, [pages]);
 
   const allSelected = pageCount > 0 && selectedIds.size === pageCount;
-  const passwordTooShort = passwordProtectEnabled && passwordValue.length > 0 && passwordValue.length < 4;
-  const passwordsDoNotMatch =
-    passwordProtectEnabled &&
-    confirmPasswordValue.length > 0 &&
-    passwordValue.length > 0 &&
-    passwordValue !== confirmPasswordValue;
-  const passwordValid =
-    passwordProtectEnabled &&
-    passwordValue.length >= 4 &&
-    confirmPasswordValue.length >= 4 &&
-    passwordValue === confirmPasswordValue;
-  const exportBlockedByPassword = passwordProtectEnabled && (!passwordValid || !encryptionSupported);
+  const exportBlockedByWatermark = watermarkEnabled && !watermarkText.trim();
 
   const pushHistory = () => {
     setHistory((prev) => {
@@ -525,29 +520,51 @@ function App() {
     return merged.save();
   }
 
-  function resetPasswordFields() {
-    setPasswordValue("");
-    setConfirmPasswordValue("");
-    setShowPasswordValue(false);
-    setShowConfirmPasswordValue(false);
+  function watermarkCoords(position, pageWidth, pageHeight, textWidth, fontSize) {
+    const margin = 28;
+    if (position === "top_left") return { x: margin, y: pageHeight - margin - fontSize, rotation: degrees(0) };
+    if (position === "top_right") {
+      return { x: Math.max(margin, pageWidth - margin - textWidth), y: pageHeight - margin - fontSize, rotation: degrees(0) };
+    }
+    if (position === "bottom_left") return { x: margin, y: margin, rotation: degrees(0) };
+    if (position === "bottom_right") {
+      return { x: Math.max(margin, pageWidth - margin - textWidth), y: margin, rotation: degrees(0) };
+    }
+    return {
+      x: Math.max(margin, pageWidth / 2 - textWidth / 2),
+      y: Math.max(margin, pageHeight / 2 - fontSize / 2),
+      rotation: degrees(45),
+    };
   }
 
-  useEffect(() => {
-    let mounted = true;
-    const checkEncryptionSupport = async () => {
-      try {
-        const probe = await PDFDocument.create();
-        const canEncrypt = typeof probe?.encrypt === "function";
-        if (mounted) setEncryptionSupported(canEncrypt);
-      } catch {
-        if (mounted) setEncryptionSupported(false);
-      }
-    };
-    checkEncryptionSupport();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  async function applyWatermarkToPdfBytes(bytes) {
+    const doc = await PDFDocument.load(bytes);
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const text = watermarkText.trim();
+    if (!text) return bytes;
+    const size = Number(watermarkFontSize) || 48;
+    const opacity = Math.min(1, Math.max(0.1, Number(watermarkOpacityPercent) / 100));
+    const selectedColor = WATERMARK_COLORS[watermarkColor] || WATERMARK_COLORS.gray;
+    const [r, g, b] = selectedColor.rgb;
+
+    const pagesInDoc = doc.getPages();
+    pagesInDoc.forEach((page) => {
+      const { width, height } = page.getSize();
+      const textWidth = font.widthOfTextAtSize(text, size);
+      const coords = watermarkCoords(watermarkPosition, width, height, textWidth, size);
+      page.drawText(text, {
+        x: coords.x,
+        y: coords.y,
+        size,
+        font,
+        color: rgb(r, g, b),
+        opacity,
+        rotate: coords.rotation,
+      });
+    });
+
+    return doc.save();
+  }
 
   useEffect(() => {
     if (!exportOpen) return;
@@ -575,22 +592,12 @@ function App() {
 
   async function exportPdf() {
     if (!pages.length) return;
-    if (exportBlockedByPassword) return;
+    if (exportBlockedByWatermark) return;
     setIsExporting(true);
     try {
       let bytes = await buildMergedPdfBytes(pages);
-      if (passwordProtectEnabled && passwordValid) {
-        if (!encryptionSupported) {
-          showToast("Password protection is not supported in this browser build yet.");
-          return;
-        }
-        const protectedDoc = await PDFDocument.load(bytes);
-        await protectedDoc.encrypt({
-          userPassword: passwordValue,
-          ownerPassword: passwordValue,
-          keyBits: 128,
-        });
-        bytes = await protectedDoc.save();
+      if (watermarkEnabled && watermarkText.trim()) {
+        bytes = await applyWatermarkToPdfBytes(bytes);
       }
       const blob = new Blob([bytes], { type: "application/pdf" });
       const filename = buildExportName(filenamePreset, customName);
@@ -602,12 +609,10 @@ function App() {
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      if (passwordProtectEnabled && passwordValid) {
-        showToast("PDF exported with password protection ✓", "success");
+      if (watermarkEnabled && watermarkText.trim()) {
+        showToast("PDF exported with watermark ✓", "success");
       }
       setExportOpen(false);
-      setPasswordProtectEnabled(false);
-      resetPasswordFields();
     } catch (error) {
       console.error("Export failed:", error);
       const message = String(error?.message || "").trim();
@@ -908,26 +913,22 @@ function App() {
 
               <div className="mt-4 rounded-lg border border-white/10 bg-[#101010] p-3">
                 <div className="flex items-center justify-between">
-                  <label htmlFor="password-protect-toggle" className="text-sm font-medium text-gray-200">
-                    Password Protect
+                  <label htmlFor="watermark-toggle" className="text-sm font-medium text-gray-200">
+                    🔖 Add Watermark
                   </label>
                   <button
-                    id="password-protect-toggle"
+                    id="watermark-toggle"
                     type="button"
                     role="switch"
-                    aria-checked={passwordProtectEnabled}
-                    onClick={() => {
-                      const nextEnabled = !passwordProtectEnabled;
-                      setPasswordProtectEnabled(nextEnabled);
-                      resetPasswordFields();
-                    }}
+                    aria-checked={watermarkEnabled}
+                    onClick={() => setWatermarkEnabled((v) => !v)}
                     className={`relative h-7 w-12 rounded-full transition ${
-                      passwordProtectEnabled ? "bg-accent" : "bg-white/20"
+                      watermarkEnabled ? "bg-accent" : "bg-white/20"
                     }`}
                   >
                     <span
                       className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${
-                        passwordProtectEnabled ? "left-6" : "left-1"
+                        watermarkEnabled ? "left-6" : "left-1"
                       }`}
                     />
                   </button>
@@ -935,64 +936,90 @@ function App() {
 
                 <div
                   className={`overflow-hidden transition-all duration-200 ${
-                    passwordProtectEnabled ? "mt-3 max-h-56 opacity-100" : "max-h-0 opacity-0"
+                    watermarkEnabled ? "mt-3 max-h-[30rem] opacity-100" : "max-h-0 opacity-0"
                   }`}
                 >
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div>
-                      <label className="mb-1 block text-xs text-gray-300">Set Password</label>
-                      <div className="relative">
-                        <input
-                          type={showPasswordValue ? "text" : "password"}
-                          className="w-full rounded-lg border border-white/15 bg-[#0d0d0d] px-3 py-2 pr-11 text-sm text-white outline-none ring-accent focus:ring"
-                          value={passwordValue}
-                          onChange={(e) => setPasswordValue(e.target.value)}
-                          autoComplete="new-password"
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs text-gray-300 hover:bg-white/10"
-                          onClick={() => setShowPasswordValue((v) => !v)}
-                          aria-label={showPasswordValue ? "Hide password" : "Show password"}
-                        >
-                          👁
-                        </button>
-                      </div>
+                      <label className="mb-1 block text-xs text-gray-300">Watermark Text</label>
+                      <input
+                        type="text"
+                        className="w-full rounded-lg border border-white/15 bg-[#0d0d0d] px-3 py-2 text-sm text-white outline-none ring-accent focus:ring"
+                        value={watermarkText}
+                        onChange={(e) => setWatermarkText(e.target.value)}
+                        placeholder="CONFIDENTIAL"
+                        maxLength={120}
+                      />
                     </div>
+
                     <div>
-                      <label className="mb-1 block text-xs text-gray-300">Confirm Password</label>
-                      <div className="relative">
-                        <input
-                          type={showConfirmPasswordValue ? "text" : "password"}
-                          className="w-full rounded-lg border border-white/15 bg-[#0d0d0d] px-3 py-2 pr-11 text-sm text-white outline-none ring-accent focus:ring"
-                          value={confirmPasswordValue}
-                          onChange={(e) => setConfirmPasswordValue(e.target.value)}
-                          autoComplete="new-password"
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs text-gray-300 hover:bg-white/10"
-                          onClick={() => setShowConfirmPasswordValue((v) => !v)}
-                          aria-label={showConfirmPasswordValue ? "Hide confirm password" : "Show confirm password"}
-                        >
-                          👁
-                        </button>
+                      <div className="mb-1 flex items-center justify-between text-xs text-gray-300">
+                        <label>Font Size</label>
+                        <span>{watermarkFontSize}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="20"
+                        max="80"
+                        value={watermarkFontSize}
+                        onChange={(e) => setWatermarkFontSize(Number(e.target.value))}
+                        className="w-full accent-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="mb-1 flex items-center justify-between text-xs text-gray-300">
+                        <label>Opacity</label>
+                        <span>{watermarkOpacityPercent}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="10"
+                        max="100"
+                        value={watermarkOpacityPercent}
+                        onChange={(e) => setWatermarkOpacityPercent(Number(e.target.value))}
+                        className="w-full accent-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-xs text-gray-300">Color</label>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(WATERMARK_COLORS).map(([key, value]) => (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => setWatermarkColor(key)}
+                            className={`rounded-md border px-3 py-1.5 text-xs ${
+                              watermarkColor === key
+                                ? "border-accent bg-accent/20 text-white"
+                                : "border-white/15 text-gray-200"
+                            }`}
+                          >
+                            <span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: value.hex }} />
+                            {value.label}
+                          </button>
+                        ))}
                       </div>
                     </div>
 
-                    {passwordTooShort && (
-                      <p className="text-xs font-medium text-red-400">Password must be at least 4 characters</p>
-                    )}
-                    {!passwordTooShort && passwordsDoNotMatch && (
-                      <p className="text-xs font-medium text-red-400">Passwords do not match</p>
-                    )}
-                    {!encryptionSupported && (
-                      <p className="text-xs font-medium text-red-400">
-                        Password protection is not supported in this build yet.
-                      </p>
-                    )}
-                    {passwordValid && encryptionSupported && (
-                      <p className="text-xs font-medium text-green-400">✓ Passwords match</p>
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-300">Position</label>
+                      <select
+                        className="w-full rounded-lg border border-white/15 bg-[#0d0d0d] px-3 py-2 text-sm text-white outline-none ring-accent focus:ring"
+                        value={watermarkPosition}
+                        onChange={(e) => setWatermarkPosition(e.target.value)}
+                      >
+                        <option value="center_diagonal">Center (diagonal)</option>
+                        <option value="top_left">Top-Left</option>
+                        <option value="top_right">Top-Right</option>
+                        <option value="bottom_left">Bottom-Left</option>
+                        <option value="bottom_right">Bottom-Right</option>
+                      </select>
+                    </div>
+
+                    {watermarkEnabled && !watermarkText.trim() && (
+                      <p className="text-xs font-medium text-red-400">Watermark text is required</p>
                     )}
                   </div>
                 </div>
@@ -1003,11 +1030,7 @@ function App() {
               <button
                 type="button"
                 className="tap-target flex-1 rounded-lg border border-white/15 px-4 py-3 text-sm text-gray-200 hover:bg-white/5"
-                onClick={() => {
-                  setExportOpen(false);
-                  setPasswordProtectEnabled(false);
-                  resetPasswordFields();
-                }}
+                onClick={() => setExportOpen(false)}
                 disabled={isExporting}
               >
                 Cancel
@@ -1016,9 +1039,9 @@ function App() {
                 type="button"
                 className="tap-target flex-1 rounded-lg bg-accent px-4 py-3 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
                 onClick={exportPdf}
-                disabled={isExporting || exportBlockedByPassword}
+                disabled={isExporting || exportBlockedByWatermark}
               >
-                {isExporting ? "Exporting..." : passwordProtectEnabled ? "🔒 Export PDF" : "Export PDF"}
+                {isExporting ? "Exporting..." : "Export PDF"}
               </button>
             </div>
           </div>
