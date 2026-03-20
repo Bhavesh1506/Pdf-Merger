@@ -122,6 +122,11 @@ function App() {
   const [estimatedBytes, setEstimatedBytes] = useState(0);
   const [isEstimating, setIsEstimating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [passwordProtectEnabled, setPasswordProtectEnabled] = useState(false);
+  const [passwordValue, setPasswordValue] = useState("");
+  const [confirmPasswordValue, setConfirmPasswordValue] = useState("");
+  const [showPasswordValue, setShowPasswordValue] = useState(false);
+  const [showConfirmPasswordValue, setShowConfirmPasswordValue] = useState(false);
 
   const fileInputRef = useRef(null);
   const sourceBytesRef = useRef(new Map());
@@ -162,6 +167,18 @@ function App() {
   }, [pages]);
 
   const allSelected = pageCount > 0 && selectedIds.size === pageCount;
+  const passwordTooShort = passwordProtectEnabled && passwordValue.length > 0 && passwordValue.length < 4;
+  const passwordsDoNotMatch =
+    passwordProtectEnabled &&
+    confirmPasswordValue.length > 0 &&
+    passwordValue.length > 0 &&
+    passwordValue !== confirmPasswordValue;
+  const passwordValid =
+    passwordProtectEnabled &&
+    passwordValue.length >= 4 &&
+    confirmPasswordValue.length >= 4 &&
+    passwordValue === confirmPasswordValue;
+  const exportBlockedByPassword = passwordProtectEnabled && !passwordValid;
 
   const pushHistory = () => {
     setHistory((prev) => {
@@ -507,6 +524,13 @@ function App() {
     return merged.save();
   }
 
+  function resetPasswordFields() {
+    setPasswordValue("");
+    setConfirmPasswordValue("");
+    setShowPasswordValue(false);
+    setShowConfirmPasswordValue(false);
+  }
+
   useEffect(() => {
     if (!exportOpen) return;
     let cancelled = false;
@@ -533,9 +557,26 @@ function App() {
 
   async function exportPdf() {
     if (!pages.length) return;
+    if (exportBlockedByPassword) return;
     setIsExporting(true);
     try {
-      const bytes = await buildMergedPdfBytes(pages);
+      let bytes = await buildMergedPdfBytes(pages);
+      if (passwordProtectEnabled && passwordValid) {
+        const protectedDoc = await PDFDocument.load(bytes);
+        try {
+          await protectedDoc.encrypt({
+            userPassword: passwordValue,
+            ownerPassword: passwordValue,
+            keyBits: 128,
+          });
+        } catch {
+          await protectedDoc.encrypt({
+            userPassword: passwordValue,
+            ownerPassword: passwordValue,
+          });
+        }
+        bytes = await protectedDoc.save();
+      }
       const blob = new Blob([bytes], { type: "application/pdf" });
       const filename = buildExportName(filenamePreset, customName);
       const url = URL.createObjectURL(blob);
@@ -546,7 +587,12 @@ function App() {
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
+      if (passwordProtectEnabled && passwordValid) {
+        showToast("PDF exported with password protection ✓", "success");
+      }
       setExportOpen(false);
+      setPasswordProtectEnabled(false);
+      resetPasswordFields();
     } catch (error) {
       console.error("Export failed:", error);
       const message = String(error?.message || "").trim();
@@ -844,13 +890,102 @@ function App() {
                 disabled={filenamePreset !== "custom"}
               />
               <p className="mt-2 text-xs text-gray-400">Final file: {buildExportName(filenamePreset, customName)}</p>
+
+              <div className="mt-4 rounded-lg border border-white/10 bg-[#101010] p-3">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="password-protect-toggle" className="text-sm font-medium text-gray-200">
+                    Password Protect
+                  </label>
+                  <button
+                    id="password-protect-toggle"
+                    type="button"
+                    role="switch"
+                    aria-checked={passwordProtectEnabled}
+                    onClick={() => {
+                      const nextEnabled = !passwordProtectEnabled;
+                      setPasswordProtectEnabled(nextEnabled);
+                      resetPasswordFields();
+                    }}
+                    className={`relative h-7 w-12 rounded-full transition ${
+                      passwordProtectEnabled ? "bg-accent" : "bg-white/20"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${
+                        passwordProtectEnabled ? "left-6" : "left-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div
+                  className={`overflow-hidden transition-all duration-200 ${
+                    passwordProtectEnabled ? "mt-3 max-h-56 opacity-100" : "max-h-0 opacity-0"
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-300">Set Password</label>
+                      <div className="relative">
+                        <input
+                          type={showPasswordValue ? "text" : "password"}
+                          className="w-full rounded-lg border border-white/15 bg-[#0d0d0d] px-3 py-2 pr-11 text-sm text-white outline-none ring-accent focus:ring"
+                          value={passwordValue}
+                          onChange={(e) => setPasswordValue(e.target.value)}
+                          autoComplete="new-password"
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs text-gray-300 hover:bg-white/10"
+                          onClick={() => setShowPasswordValue((v) => !v)}
+                          aria-label={showPasswordValue ? "Hide password" : "Show password"}
+                        >
+                          👁
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-300">Confirm Password</label>
+                      <div className="relative">
+                        <input
+                          type={showConfirmPasswordValue ? "text" : "password"}
+                          className="w-full rounded-lg border border-white/15 bg-[#0d0d0d] px-3 py-2 pr-11 text-sm text-white outline-none ring-accent focus:ring"
+                          value={confirmPasswordValue}
+                          onChange={(e) => setConfirmPasswordValue(e.target.value)}
+                          autoComplete="new-password"
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs text-gray-300 hover:bg-white/10"
+                          onClick={() => setShowConfirmPasswordValue((v) => !v)}
+                          aria-label={showConfirmPasswordValue ? "Hide confirm password" : "Show confirm password"}
+                        >
+                          👁
+                        </button>
+                      </div>
+                    </div>
+
+                    {passwordTooShort && (
+                      <p className="text-xs font-medium text-red-400">Password must be at least 4 characters</p>
+                    )}
+                    {!passwordTooShort && passwordsDoNotMatch && (
+                      <p className="text-xs font-medium text-red-400">Passwords do not match</p>
+                    )}
+                    {passwordValid && <p className="text-xs font-medium text-green-400">✓ Passwords match</p>}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="mt-6 flex gap-3">
               <button
                 type="button"
                 className="tap-target flex-1 rounded-lg border border-white/15 px-4 py-3 text-sm text-gray-200 hover:bg-white/5"
-                onClick={() => setExportOpen(false)}
+                onClick={() => {
+                  setExportOpen(false);
+                  setPasswordProtectEnabled(false);
+                  resetPasswordFields();
+                }}
                 disabled={isExporting}
               >
                 Cancel
@@ -859,9 +994,9 @@ function App() {
                 type="button"
                 className="tap-target flex-1 rounded-lg bg-accent px-4 py-3 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
                 onClick={exportPdf}
-                disabled={isExporting}
+                disabled={isExporting || exportBlockedByPassword}
               >
-                {isExporting ? "Exporting..." : "Export PDF"}
+                {isExporting ? "Exporting..." : passwordProtectEnabled ? "🔒 Export PDF" : "Export PDF"}
               </button>
             </div>
           </div>
