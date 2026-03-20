@@ -58,6 +58,6 @@ npm run dev
 
 Contributions are welcome. Feel free to open an issue for ideas, bug reports, or feature requests, and submit a PR if you want to improve PaperFuse.
 
-## ?? License
+## License
 
 This project is licensed under the MIT License.
