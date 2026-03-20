@@ -9,29 +9,29 @@
 
 PaperFuse is a client-side PDF tool for merging, arranging, and exporting documents without uploading files to any server.
 
-## ? Features
+##  Features
 
-### ?? Multi-PDF Merge
+### Multi-PDF Merge
 - Upload multiple PDFs at once and view all pages in one responsive thumbnail grid.
 - Pages are grouped by source file, and you can drag-and-drop across groups.
 - Rotate pages, delete unwanted pages, and export a single merged PDF in the exact order you set.
 
-### ??? Image to PDF
+### Image to PDF
 - Upload JPG, PNG, and WEBP files alongside PDFs in the same workflow.
 - Images are treated as single-page documents and appear in the same sortable grid.
 - On export, images are converted and merged into the final PDF in sequence.
 
-### ??? Watermark
+### Watermark
 - Add a custom text watermark across all exported pages.
 - Configure font size, opacity, color, and placement.
 - Supports center diagonal placement or corner positions.
 
-## ?? Privacy
+## Privacy
 - Files never leave your device.
 - No backend processing, no cloud storage, no upload step.
 - All PDF/image processing is handled in-browser via `pdf-lib` and `PDF.js`.
 
-## ?? Tech Stack
+## Tech Stack
 
 | Layer | Technology |
 |---|---|
@@ -41,7 +41,7 @@ PaperFuse is a client-side PDF tool for merging, arranging, and exporting docume
 | Thumbnail Rendering | PDF.js (`pdfjs-dist`) |
 | Deployment | Netlify |
 
-## ?? Getting Started
+## Getting Started
 
 ```bash
 git clone https://github.com/Bhavesh1506/PaperFuse.git
@@ -50,11 +50,11 @@ npm install
 npm run dev
 ```
 
-## ?? Screenshots
+## Screenshots
 
 [Add screenshots here]
 
-## ?? Contributing
+## Contributing
 
 Contributions are welcome. Feel free to open an issue for ideas, bug reports, or feature requests, and submit a PR if you want to improve PaperFuse.
 
