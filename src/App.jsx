@@ -127,6 +127,7 @@ function App() {
   const [confirmPasswordValue, setConfirmPasswordValue] = useState("");
   const [showPasswordValue, setShowPasswordValue] = useState(false);
   const [showConfirmPasswordValue, setShowConfirmPasswordValue] = useState(false);
+  const [encryptionSupported, setEncryptionSupported] = useState(true);
 
   const fileInputRef = useRef(null);
   const sourceBytesRef = useRef(new Map());
@@ -178,7 +179,7 @@ function App() {
     passwordValue.length >= 4 &&
     confirmPasswordValue.length >= 4 &&
     passwordValue === confirmPasswordValue;
-  const exportBlockedByPassword = passwordProtectEnabled && !passwordValid;
+  const exportBlockedByPassword = passwordProtectEnabled && (!passwordValid || !encryptionSupported);
 
   const pushHistory = () => {
     setHistory((prev) => {
@@ -532,6 +533,23 @@ function App() {
   }
 
   useEffect(() => {
+    let mounted = true;
+    const checkEncryptionSupport = async () => {
+      try {
+        const probe = await PDFDocument.create();
+        const canEncrypt = typeof probe?.encrypt === "function";
+        if (mounted) setEncryptionSupported(canEncrypt);
+      } catch {
+        if (mounted) setEncryptionSupported(false);
+      }
+    };
+    checkEncryptionSupport();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!exportOpen) return;
     let cancelled = false;
 
@@ -562,19 +580,16 @@ function App() {
     try {
       let bytes = await buildMergedPdfBytes(pages);
       if (passwordProtectEnabled && passwordValid) {
-        const protectedDoc = await PDFDocument.load(bytes);
-        try {
-          await protectedDoc.encrypt({
-            userPassword: passwordValue,
-            ownerPassword: passwordValue,
-            keyBits: 128,
-          });
-        } catch {
-          await protectedDoc.encrypt({
-            userPassword: passwordValue,
-            ownerPassword: passwordValue,
-          });
+        if (!encryptionSupported) {
+          showToast("Password protection is not supported in this browser build yet.");
+          return;
         }
+        const protectedDoc = await PDFDocument.load(bytes);
+        await protectedDoc.encrypt({
+          userPassword: passwordValue,
+          ownerPassword: passwordValue,
+          keyBits: 128,
+        });
         bytes = await protectedDoc.save();
       }
       const blob = new Blob([bytes], { type: "application/pdf" });
@@ -971,7 +986,14 @@ function App() {
                     {!passwordTooShort && passwordsDoNotMatch && (
                       <p className="text-xs font-medium text-red-400">Passwords do not match</p>
                     )}
-                    {passwordValid && <p className="text-xs font-medium text-green-400">✓ Passwords match</p>}
+                    {!encryptionSupported && (
+                      <p className="text-xs font-medium text-red-400">
+                        Password protection is not supported in this build yet.
+                      </p>
+                    )}
+                    {passwordValid && encryptionSupported && (
+                      <p className="text-xs font-medium text-green-400">✓ Passwords match</p>
+                    )}
                   </div>
                 </div>
               </div>
